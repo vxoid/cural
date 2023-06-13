@@ -1,0 +1,19 @@
+[package]
+name = "cural"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+documentation = "https://docs.rs/cural"
+repository = "https://github.com/CURVoid/cural.git"
+homepage = "https://github.com/CURVoid/cural.git"
+keywords = ["cural", "process", "windows", "api", "processes"]
+description = "Windows process memory model"
+
+[dependencies.windows]
+version = "0.48"
+features = [
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+]
