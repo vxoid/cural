@@ -1,4 +1,4 @@
-# Cural v0.1.0 | Windows process memory model
+# Cural v0.1.1 | Windows process memory model
 
 ## Supported OS's
 - Windows
@@ -8,7 +8,7 @@
 - `github` - https://github.com/CURVoid/cural.git
 
 ## Changelog
-- Init
+- Added `get_handle` for `Process` struct, which returns windows process handle
 
 ## Examples
 ```rust

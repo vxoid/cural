@@ -295,6 +295,11 @@ impl Process {
     Ok(modules)
   }
 
+  /// Returns windows process handle
+  pub fn get_handle(&self) -> HANDLE {
+    self.handle
+  }
+
   /// Returns name field of process
   pub fn get_name(&self) -> &str {
     &self.name
