@@ -1,25 +1,25 @@
 use std::fmt::Debug;
 use std::io;
 use std::mem;
-use std::ffi;
+use std::ptr;
 
-use windows::Win32::Foundation::BOOL;
-use windows::Win32::Foundation::CloseHandle;
-use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
-use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
-use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
-use windows::Win32::System::Diagnostics::ToolHelp::CreateToolhelp32Snapshot;
-use windows::Win32::System::Diagnostics::ToolHelp::MODULEENTRY32;
-use windows::Win32::System::Diagnostics::ToolHelp::Module32First;
-use windows::Win32::System::Diagnostics::ToolHelp::Module32Next;
-use windows::Win32::System::Diagnostics::ToolHelp::PROCESSENTRY32;
-use windows::Win32::System::Diagnostics::ToolHelp::Process32Next;
-use windows::Win32::System::Diagnostics::ToolHelp::TH32CS_SNAPMODULE;
-use windows::Win32::System::Diagnostics::ToolHelp::TH32CS_SNAPMODULE32;
-use windows::Win32::System::Diagnostics::ToolHelp::TH32CS_SNAPPROCESS;
-use windows::Win32::System::Threading::OpenProcess;
-use windows::Win32::System::Threading::PROCESS_ALL_ACCESS;
+use winapi::shared::ntdef::HANDLE;
+use winapi::um::handleapi::CloseHandle;
+use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use winapi::um::memoryapi::ReadProcessMemory;
+use winapi::um::memoryapi::WriteProcessMemory;
+use winapi::um::processthreadsapi::OpenProcess;
+use winapi::um::tlhelp32::CreateToolhelp32Snapshot;
+use winapi::um::tlhelp32::MODULEENTRY32;
+use winapi::um::tlhelp32::Module32First;
+use winapi::um::tlhelp32::Module32Next;
+use winapi::um::tlhelp32::PROCESSENTRY32;
+use winapi::um::tlhelp32::Process32Next;
+use winapi::um::tlhelp32::TH32CS_SNAPMODULE;
+use winapi::um::tlhelp32::TH32CS_SNAPMODULE32;
+use winapi::um::tlhelp32::TH32CS_SNAPPROCESS;
+use winapi::um::winnt::PROCESS_ALL_ACCESS;
+use winapi::um::wow64apiset::IsWow64Process;
 
 use crate::Module;
 
@@ -50,15 +50,12 @@ impl Process {
   pub fn all() -> io::Result<Vec<Self>> {
     let mut result = Vec::new();
 
-    let mut entry = PROCESSENTRY32::default();
+    let mut entry = unsafe { mem::zeroed::<PROCESSENTRY32>() };
     entry.dwSize = mem::size_of::<PROCESSENTRY32>() as u32;
 
     let snapshot = unsafe {
       CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    }.map_err(|err| io::Error::new(
-      io::ErrorKind::Interrupted,
-      err
-    ))?;
+    };
 
     if snapshot == INVALID_HANDLE_VALUE {
       return Err(io::Error::new(
@@ -67,26 +64,24 @@ impl Process {
       ));
     }
 
-    while unsafe { Process32Next(snapshot, &mut entry) } != BOOL(0) {
+    while unsafe { Process32Next(snapshot, &mut entry) } != 0 {
       let id = entry.th32ProcessID;
-      let handle = match unsafe {
-        OpenProcess(PROCESS_ALL_ACCESS, false, id)
-      } {
-        Ok(handle) => handle,
-        Err(_) => continue,
+      let handle = unsafe {
+        OpenProcess(PROCESS_ALL_ACCESS, 0, id)
       };
-      
-      if handle.is_invalid() {
+
+      if handle == INVALID_HANDLE_VALUE {
         continue;
       }
 
       let c_name = entry.szExeFile.into_iter()
         .take_while(|byte| byte != &0)
-        .map(|byte| byte as char)
+        .map(|byte| byte as u8 as char)
         .collect::<String>();
 
       result.push(Self { id, name: c_name, handle })
     }
+
     unsafe { CloseHandle(snapshot) };
 
     Ok(result)
@@ -101,55 +96,17 @@ impl Process {
   /// println!("found {}", process);
   /// ```
   pub fn find(name: &str) -> io::Result<Self> {
-    let mut entry = PROCESSENTRY32::default();
-    entry.dwSize = mem::size_of::<PROCESSENTRY32>() as u32;
+    let all = Process::all()?;
 
-    let snapshot = unsafe {
-      CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    }.map_err(|err| io::Error::new(
-      io::ErrorKind::Interrupted,
-      err
-    ))?;
-
-    if snapshot == INVALID_HANDLE_VALUE {
-      return Err(io::Error::new(
-        io::ErrorKind::Interrupted,
-        "Couldn't create snapshot tool"
-      ));
-    }
-
-    while unsafe { Process32Next(snapshot, &mut entry) } != BOOL(0) {
-      let c_name = entry.szExeFile.into_iter()
-        .take_while(|byte| byte != &0)
-        .map(|byte| byte as char)
-        .collect::<String>();
-
-      if name != c_name {
-        continue;
+    for process in all {
+      if &process.name == name {
+        return Ok(process);
       }
-
-      let id = entry.th32ProcessID;
-      let handle = unsafe {
-        OpenProcess(PROCESS_ALL_ACCESS, false, id)
-      }.map_err(|err| io::Error::new(
-        io::ErrorKind::Interrupted,
-        err
-      ))?;
-      unsafe { CloseHandle(snapshot) };
-
-      if handle.is_invalid() {
-        return Err(io::Error::new(
-          io::ErrorKind::InvalidData,
-          "got invalid handle while opening process"
-        ));
-      }
-
-      return Ok(Self { id, name: c_name, handle });
     }
 
     Err(io::Error::new(
       io::ErrorKind::NotFound,
-      format!("no process with name {} found", name)
+      format!("no process found with name {}", name)
     ))
   }
 
@@ -169,10 +126,10 @@ impl Process {
     unsafe {
       ReadProcessMemory(
         self.handle,
-        address as *const ffi::c_void,
-        &mut buffer as *mut T as *mut ffi::c_void,
+        address as *const _,
+        &mut buffer as *mut T as *mut _,
         mem::size_of::<T>(),
-        None
+        ptr::null_mut()
       );
     }
 
@@ -191,10 +148,10 @@ impl Process {
     unsafe {
       WriteProcessMemory(
         self.handle,
-        address as *const ffi::c_void,
-        &value as *const T as *const ffi::c_void,
+        address as *mut _,
+        &value as *const T as *const _,
         mem::size_of::<T>(),
-        None
+        ptr::null_mut()
       )
     };
   }
@@ -208,36 +165,10 @@ impl Process {
   /// let kernel = process.get_module("KERNEL32.DLL").expect("no such dll");
   /// ```
   pub fn get_module(&self, module: &str) -> io::Result<Module> {
-    let mut entry = MODULEENTRY32::default();
-    entry.dwSize = mem::size_of::<MODULEENTRY32>() as u32;
+    let all = self.get_all_modules()?;
 
-    let snapshot = unsafe {
-      CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, self.id)
-    }.map_err(|err| io::Error::new(
-      io::ErrorKind::Interrupted,
-      err
-    ))?;
-
-    if snapshot == INVALID_HANDLE_VALUE {
-      return Err(io::Error::new(
-        io::ErrorKind::Interrupted,
-        "Couldn't create snapshot tool"
-      ));
-    }
-
-    while unsafe { Module32Next(snapshot, &mut entry) } != BOOL(0) {
-      let c_module = entry.szModule.into_iter()
-        .take_while(|byte| byte != &0)
-        .map(|byte| byte as char)
-        .collect::<String>();
-
-      if c_module != module {
-        continue;
-      }
-
-      unsafe { CloseHandle(snapshot) };
-
-      return Ok(Module { name: c_module, address: entry.modBaseAddr as usize });
+    for module in all {
+      return Ok(module);
     }
 
     Err(io::Error::new(
@@ -256,15 +187,13 @@ impl Process {
   /// ```
   pub fn get_all_modules(&self) -> io::Result<Vec<Module>> {
     let mut modules = Vec::new();
-    let mut entry = MODULEENTRY32::default();
+
+    let mut entry = unsafe { mem::zeroed::<MODULEENTRY32>() };
     entry.dwSize = mem::size_of::<MODULEENTRY32>() as u32;
 
     let snapshot = unsafe {
       CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, self.id)
-    }.map_err(|err| io::Error::new(
-      io::ErrorKind::Interrupted,
-      err
-    ))?;
+    };
 
     if snapshot == INVALID_HANDLE_VALUE {
       return Err(io::Error::new(
@@ -273,19 +202,19 @@ impl Process {
       ));
     }
 
-    if unsafe { Module32First(snapshot, &mut entry) } == BOOL(0) {
+    if unsafe { Module32First(snapshot, &mut entry) } == 0 {
       return Ok(modules);
     }
 
     loop {
       let c_module = entry.szModule.into_iter()
         .take_while(|byte| byte != &0)
-        .map(|byte| byte as char)
+        .map(|byte| byte as u8 as char)
         .collect::<String>();
 
       modules.push(Module { name: c_module, address: entry.modBaseAddr as usize });
 
-      if unsafe { Module32Next(snapshot, &mut entry) } == BOOL(0) {
+      if unsafe { Module32Next(snapshot, &mut entry) } == 0 {
         break;
       }
     }
@@ -293,6 +222,17 @@ impl Process {
     unsafe { CloseHandle(snapshot) };
 
     Ok(modules)
+  }
+
+  /// Returns is process x64 or no
+  pub fn is_x64(&self) -> io::Result<bool> {
+    let mut is_x64 = 0;
+    
+    if unsafe { IsWow64Process(self.handle, &mut is_x64) } != 1 {
+      return Err(io::Error::last_os_error());
+    }
+
+    return Ok(is_x64 != 1);
   }
 
   /// Returns windows process handle

@@ -1,7 +1,4 @@
 #[cfg(target_os = "windows")]
-extern crate windows;
-
-#[cfg(target_os = "windows")]
 mod process;
 #[cfg(target_os = "windows")]
 mod module;
